@@ -30,3 +30,9 @@ VIN is connected our wall charger (5V DC ~5W) and left USB port to our server (s
   4. If battery reaches 80%, it turns down charging and smartphone starts to run on its own battery.
 
 And that is unique way to reuse old devices into usefull server :)
+
+
+# TODO
+- [x] README file
+- [ ] Interactive choice WiFi and logging in
+- [ ] Implement light-sleep mode
