@@ -7,8 +7,8 @@
 #define charger 33
 
 // WiFi
-const char *ssid = "***REMOVED***";
-const char *passwd = "***REMOVED***";
+const char *ssid = "*******";
+const char *passwd = "*******";
 // MQTT
 const char *mqtt_server = "192.168.0.100";
 const int mqtt_port = 1883;
