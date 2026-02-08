@@ -11,8 +11,8 @@
 #define led_builtin 8
 
 // WiFi
-static const char *ssid = "***********";
-static const char *passwd = "********";
+static const char *ssid = "*********";
+static const char *passwd = "**********";
 // MQTT
 static const char *mqtt_server = "192.168.0.100";
 static const int mqtt_port = 1883;
@@ -23,7 +23,6 @@ static const char *mqtt_charg_topic = "broker/charger";
 // Telnet
 static const int telnet_port = 23;
 
-static bool telnet_connected = false;
 static bool OTAUpdate = false;
 static int64_t last_recon_time = 0;
 
@@ -79,34 +78,37 @@ void setup() {
 void loop() {
   ArduinoOTA.handle();
 
-  int64_t now = esp_timer_get_time();
+  if (!OTAUpdate) {
 
-  if (!mqttClient.connected() && now - last_recon_time > 5000000) { // 5 sec
-    reconnect();
-    last_recon_time = esp_timer_get_time();
-  }
+    int64_t now = esp_timer_get_time();
 
-  mqttClient.loop();
-
-
-  if ((!telnet || !telnet.connected()) && !telnet_connected) {
-    
-    telnet = telnetServer.accept();
-      
-    if (telnet) {
-      
-      telnet.println("INFO: \tTelnet client have just connected!\r");
-      Serial.println("Telnet client have just connected!");
-      telnet.println("...\r\n");
-      telnet_connected = true;
-
-      telnet.printf("WARNING: \tLast reset reason: %s\n\r", getResetReason());
-
-      
+    if (!mqttClient.connected() && now - last_recon_time > 5000000) { // 5 sec
+      reconnect();
+      last_recon_time = esp_timer_get_time();
     }
+
+    mqttClient.loop();
+
+
+    if ((!telnet || !telnet.connected())) {
+      
+      telnet = telnetServer.accept();
+        
+      if (telnet) {
+        
+        telnet.println("INFO: \tTelnet client have just connected!\r");
+        Serial.println("Telnet client have just connected!");
+        telnet.println("...\r\n");
+
+        telnet.printf("WARNING: \tLast reset reason: %s\n\r", getResetReason());
+
+        
+      }
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(100));
   }
 
-  vTaskDelay(pdMS_TO_TICKS(100));
 }
 
 void reconnect() {
