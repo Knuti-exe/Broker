@@ -3,53 +3,56 @@
 #include <PubSubClient.h>
 #include <ESPTelnet.h>
 #include <ArduinoOTA.h>
+#include <esp_wifi.h>
+#include <esp_system.h>
 
-#define charger 33
+
+#define charger 4
+#define led_builtin 8
 
 // WiFi
-const char *ssid = "*******";
-const char *passwd = "*******";
+static const char *ssid = "***********";
+static const char *passwd = "********";
 // MQTT
-const char *mqtt_server = "192.168.0.100";
-const int mqtt_port = 1883;
-const char *mqtt_user = "xiao0";
-const char *mqtt_passwd = "broker#1234";
-const char *mqtt_bat_topic = "broker/battery";
-const char *mqtt_charg_topic = "broker/charger";
+static const char *mqtt_server = "192.168.0.100";
+static const int mqtt_port = 1883;
+static const char *mqtt_user = "*******";
+static const char *mqtt_passwd = "********";
+static const char *mqtt_bat_topic = "broker/battery";
+static const char *mqtt_charg_topic = "broker/charger";
 // Telnet
-const int telnet_port = 23;
+static const int telnet_port = 23;
 
-bool charging = false;
-bool state_change = false;
-bool telnet_connected = false;
-long long int last_time = 0;
-long long int last_recon_time = 0;
-long long int last_check = 0;
+static bool telnet_connected = false;
+static bool OTAUpdate = false;
+static int64_t last_recon_time = 0;
 
-WiFiServer telnetServer(telnet_port);
-WiFiClient telnetClient;
+static WiFiServer telnetServer(telnet_port);
+static WiFiClient telnet;
 
-WiFiClient client;
-PubSubClient mqttClient(client);
+static WiFiClient client;
+static PubSubClient mqttClient(client);
 
 void reconnect();
 void callback(char *topic, byte *payload, unsigned int length);
+const char* getMQTTState(int state);
+const char* getResetReason();
 
 
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
   WiFi.begin(ssid, passwd);
-  // TODO : wdrozyc strone WWW logowania do sieci WIFI 
 
-  pinMode(2, OUTPUT);
+  pinMode(led_builtin, OUTPUT);
 
   while (WiFi.status() != WL_CONNECTED) {
-    delay(200);
+    vTaskDelay(pdMS_TO_TICKS(200));
     Serial.print(".");
-    digitalWrite(2, !digitalRead(2));
+    digitalWrite(led_builtin, !digitalRead(led_builtin));
   }
   Serial.println(WiFi.localIP());
-  digitalWrite(2, LOW);
+  
+  digitalWrite(led_builtin, HIGH);   // reverse logic for builtin led
   
   telnetServer.begin();
   
@@ -59,47 +62,51 @@ void setup() {
   mqttClient.setServer(mqtt_server, mqtt_port);
   mqttClient.setCallback(callback);
 
+  esp_wifi_set_ps(WIFI_PS_MAX_MODEM);        // light-sleep mode
+
   ArduinoOTA.begin();
+
+  ArduinoOTA.onStart([]() {
+    OTAUpdate = true;
+  });
+
+  ArduinoOTA.onEnd([]() {
+    OTAUpdate = false;
+  });
+
 }
 
 void loop() {
   ArduinoOTA.handle();
 
-  if (!mqttClient.connected() && millis() - last_recon_time > 5000) {
+  int64_t now = esp_timer_get_time();
+
+  if (!mqttClient.connected() && now - last_recon_time > 5000000) { // 5 sec
     reconnect();
-    last_recon_time = millis();
+    last_recon_time = esp_timer_get_time();
   }
 
   mqttClient.loop();
 
 
-  if ((!telnetClient || !telnetClient.connected()) && !telnet_connected) {
+  if ((!telnet || !telnet.connected()) && !telnet_connected) {
     
-    telnetClient = telnetServer.accept();
+    telnet = telnetServer.accept();
       
-    if (telnetClient) {
+    if (telnet) {
       
-      telnetClient.println("Telnet client have just connected!");
+      telnet.println("INFO: \tTelnet client have just connected!\r");
       Serial.println("Telnet client have just connected!");
-      telnetClient.println("...\r\n");
+      telnet.println("...\r\n");
       telnet_connected = true;
+
+      telnet.printf("WARNING: \tLast reset reason: %s\n\r", getResetReason());
+
       
     }
   }
 
-  if (state_change) {
-
-    mqttClient.publish(mqtt_charg_topic, charging ? "on" : "off", true);
-
-    state_change = false;
-  }
-
-  if (millis() - last_check > 2000) {
-    telnetClient.printf("\rcharger read: %i\n", digitalRead(charger));
-    
-    last_check = millis();
-
-  }
+  vTaskDelay(pdMS_TO_TICKS(100));
 }
 
 void reconnect() {
@@ -107,19 +114,21 @@ void reconnect() {
   bool connected = false;
 
   Serial.println("Reconnecting with MQTT broker...");
-  telnetClient.println("\rReconnecting with MQTT broker...");
+  telnet.println("\rReconnecting with MQTT broker...");
 
-  for (int i=0; i<5; i++) {
-    if (mqttClient.connect("XIAO0", mqtt_user, mqtt_passwd)) {
+  for (int i=0; i<5; i++) {       
+    if (mqttClient.connect("Charger-c3", mqtt_user, mqtt_passwd)) {
       Serial.println("Connected.");
-      telnetClient.println("Connected.");
-
+      telnet.println("Connected.");
+      connected = true;
       mqttClient.subscribe(mqtt_bat_topic);
+
+      break;
       
     } else {
       
-      Serial.printf("Error : %i", mqttClient.state());
-      telnetClient.printf("Error : %i", mqttClient.state());
+      Serial.printf("Attempt %i - Error : %s\n\r", i, getMQTTState(mqttClient.state()));
+      telnet.printf("Attempt %i - Error : %s", i, getMQTTState(mqttClient.state()));
 
       
     }
@@ -127,7 +136,7 @@ void reconnect() {
   
   if (!connected) {
     Serial.println("Trying again later...");
-    telnetClient.println("Trying again later...");
+    telnet.println("Trying again later...");
   }  
   
 }
@@ -136,11 +145,11 @@ void callback(char *topic, byte *payload, unsigned int length) {
 
   String msg;
 
-  for (int i=0; i<length; i++) {
+  for (uint i=0; i<length; i++) {
     msg += (char)payload[i];
   }
 
-  telnetClient.printf("\rGot msg: %s, %s", topic, msg.c_str());
+  telnet.printf("\rGot msg: %s, %s", topic, msg.c_str());
 
 
   if (String(topic) == String(mqtt_bat_topic)) {
@@ -148,28 +157,57 @@ void callback(char *topic, byte *payload, unsigned int length) {
     if (msg.toInt() >= 80 ) {
 
       digitalWrite(charger, LOW);
-      charging = false;
+      digitalWrite(led_builtin, HIGH); 
 
-      telnetClient.println("NOT Charging...");
+      mqttClient.publish(mqtt_charg_topic, "off", true);
+
+      telnet.print("\tINFO: \tCHARGER : OFF\n\r");
       
 
-    } else if (msg.toInt() < 80 ) { // TODO
+    } else if (msg.toInt() <= 30 ) { 
 
       digitalWrite(charger, HIGH);
-      charging = true;
+      digitalWrite(led_builtin, LOW);
 
-      telnetClient.println("Charging...");
+      mqttClient.publish(mqtt_charg_topic, "on", true);
+
+
+      telnet.print("\tINFO: \tCHARGER : ON\n\r");
+      
 
 
     } else {
-      telnetClient.printf("ERROR: Received message has wrong value : %i, in str : %s", 
+      telnet.printf("ERROR: Received message has wrong value : %ld, in str : %s", 
         msg.toInt(), msg.c_str());
-
-      
-
     }
   }
 
-  state_change = true;
+}
 
+const char* getMQTTState(int state) {
+    switch (state) {
+        case -4: return "MQTT_CONNECTION_TIMEOUT";
+        case -3: return "MQTT_CONNECTION_LOST";
+        case -2: return "MQTT_CONNECT_FAILED";
+        case -1: return "MQTT_DISCONNECTED";
+        case  0: return "MQTT_CONNECTED";
+        case  1: return "MQTT_CONNECT_BAD_PROTOCOL";
+        case  2: return "MQTT_CONNECT_BAD_CLIENT_ID";
+        case  3: return "MQTT_CONNECT_UNAVAILABLE";
+        case  4: return "MQTT_CONNECT_BAD_CREDENTIALS";
+        case  5: return "MQTT_CONNECT_UNAUTHORIZED";
+        default: return "Unknown type";
+    }
+}
+
+const char* getResetReason() {
+    switch (esp_reset_reason()) {
+        case ESP_RST_POWERON: return "Power on reset";
+        case ESP_RST_SW:      return "Software reset";
+        case ESP_RST_PANIC:   return "Exception / Panic reset";
+        case ESP_RST_INT_WDT: return "Interrupt Watchdog";
+        case ESP_RST_TASK_WDT:return "Task Watchdog";
+        case ESP_RST_BROWNOUT:return "Voltage dip";
+        default:              return "Other";
+    }
 }
