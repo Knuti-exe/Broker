@@ -114,29 +114,27 @@ void reconnect() {
   bool connected = false;
 
   Serial.println("Reconnecting with MQTT broker...");
-  telnet.println("\rReconnecting with MQTT broker...");
-
-  for (int i=0; i<5; i++) {       
-    if (mqttClient.connect("Charger-c3", mqtt_user, mqtt_passwd)) {
-      Serial.println("Connected.");
-      telnet.println("Connected.");
-      connected = true;
-      mqttClient.subscribe(mqtt_bat_topic);
-
-      break;
-      
-    } else {
-      
-      Serial.printf("Attempt %i - Error : %s\n\r", i, getMQTTState(mqttClient.state()));
-      telnet.printf("Attempt %i - Error : %s", i, getMQTTState(mqttClient.state()));
-
-      
-    }
+  telnet.println("\rReconnecting with MQTT broker...\r");
+   
+  if (mqttClient.connect("Charger-c3", mqtt_user, mqtt_passwd)) {
+    Serial.println("Connected.");
+    telnet.println("Connected.\n\r");
+    
+    connected = true;
+    
+    mqttClient.subscribe(mqtt_bat_topic);
+    
+  } else {
+    
+    Serial.printf("Error: \t%s\n", getMQTTState(mqttClient.state()));
+    telnet.printf("Error: \t%s\n\r", getMQTTState(mqttClient.state()));
+   
   }
+  
   
   if (!connected) {
     Serial.println("Trying again later...");
-    telnet.println("Trying again later...");
+    telnet.println("Trying again later...\r");
   }  
   
 }
@@ -149,7 +147,7 @@ void callback(char *topic, byte *payload, unsigned int length) {
     msg += (char)payload[i];
   }
 
-  telnet.printf("\rGot msg: %s, %s", topic, msg.c_str());
+  telnet.printf("\rGot msg: %s, %s", topic, msg.c_str());  // useless
 
 
   if (String(topic) == String(mqtt_bat_topic)) {
@@ -177,7 +175,7 @@ void callback(char *topic, byte *payload, unsigned int length) {
 
 
     } else {
-      telnet.printf("ERROR: Received message has wrong value : %ld, in str : %s", 
+      telnet.printf("ERROR: Received message has wrong value : %ld, in str : %s\n", 
         msg.toInt(), msg.c_str());
     }
   }
