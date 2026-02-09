@@ -8,23 +8,32 @@
 
 
 #define charger 4
-#define led_builtin 8
+#define charging_led 8
 
 // WiFi
-static const char *ssid = "*********";
-static const char *passwd = "**********";
+static const char *ssid = "TP-Link_5235";
+static const char *passwd = "MaDaPi16";
 // MQTT
 static const char *mqtt_server = "192.168.0.100";
 static const int mqtt_port = 1883;
-static const char *mqtt_user = "*******";
-static const char *mqtt_passwd = "********";
+static const char *mqtt_user = "custom";
+static const char *mqtt_passwd = "broker#123";
 static const char *mqtt_bat_topic = "broker/battery";
 static const char *mqtt_charg_topic = "broker/charger";
 // Telnet
 static const int telnet_port = 23;
 
 static bool OTAUpdate = false;
+static bool last_charger_state = true;
 static int64_t last_recon_time = 0;
+
+// Font colors
+const static char* clr_charger_on = "\033[32mON\033[0m";
+const static char* clr_charger_off = "\033[33mOFF\033[0m";
+const static char* CLR_RST = "\033[0m";
+const static char* CLR_RED = "\033[31m";
+const static char* CLR_GRN = "\033[32m";
+const static char* CLR_YLW = "\033[33m";
 
 static WiFiServer telnetServer(telnet_port);
 static WiFiClient telnet;
@@ -36,22 +45,22 @@ void reconnect();
 void callback(char *topic, byte *payload, unsigned int length);
 const char* getMQTTState(int state);
 const char* getResetReason();
-
+void Change_state(bool charge=true);
 
 void setup() {
   Serial.begin(115200);
   WiFi.begin(ssid, passwd);
 
-  pinMode(led_builtin, OUTPUT);
+  pinMode(charging_led, OUTPUT);
 
   while (WiFi.status() != WL_CONNECTED) {
     vTaskDelay(pdMS_TO_TICKS(200));
     Serial.print(".");
-    digitalWrite(led_builtin, !digitalRead(led_builtin));
+    digitalWrite(charging_led, !digitalRead(charging_led));
   }
   Serial.println(WiFi.localIP());
   
-  digitalWrite(led_builtin, HIGH);   // reverse logic for builtin led
+  digitalWrite(charging_led, HIGH);   // reverse logic for builtin led
   
   telnetServer.begin();
   
@@ -73,6 +82,9 @@ void setup() {
     OTAUpdate = false;
   });
 
+  
+  Change_state(last_charger_state);
+  
 }
 
 void loop() {
@@ -96,11 +108,15 @@ void loop() {
         
       if (telnet) {
         
-        telnet.println("INFO: \tTelnet client have just connected!\r");
-        Serial.println("Telnet client have just connected!");
-        telnet.println("...\r\n");
+        telnet.print("INFO: \tTelnet client have just connected!\n\r");
+        Serial.print("Telnet client have just connected!\n\r");
+        telnet.print("...\n\r");
 
-        telnet.printf("WARNING: \tLast reset reason: %s\n\r", getResetReason());
+        telnet.printf("%sWARNING%s: \tLast reset reason: %s%s%s\n\r",
+          CLR_YLW, CLR_RST, CLR_YLW, getResetReason(), CLR_RST);
+
+        telnet.printf("INFO: \tLast charger state: %s\n\r", 
+          (last_charger_state) ? clr_charger_on : clr_charger_off);
 
         
       }
@@ -109,18 +125,19 @@ void loop() {
     vTaskDelay(pdMS_TO_TICKS(100));
   }
 
+
 }
 
 void reconnect() {
 
   bool connected = false;
 
-  Serial.println("Reconnecting with MQTT broker...");
-  telnet.println("\rReconnecting with MQTT broker...\r");
+  Serial.print("Reconnecting with MQTT broker...\n");
+  telnet.printf("\r%sReconnecting with MQTT broker...%s\n\r", CLR_YLW, CLR_RST);
    
   if (mqttClient.connect("Charger-c3", mqtt_user, mqtt_passwd)) {
-    Serial.println("Connected.");
-    telnet.println("Connected.\n\r");
+    Serial.print("Connected.\n\n");
+    telnet.print("Connected.\n\n\r");
     
     connected = true;
     
@@ -128,15 +145,18 @@ void reconnect() {
     
   } else {
     
-    Serial.printf("Error: \t%s\n", getMQTTState(mqttClient.state()));
-    telnet.printf("Error: \t%s\n\r", getMQTTState(mqttClient.state()));
+    Serial.printf("%sError: \t%s%s\n", 
+      CLR_RED, getMQTTState(mqttClient.state()), CLR_RST);
+
+    telnet.printf("%sError: \t%s%s\n\r", 
+      CLR_RED, getMQTTState(mqttClient.state()), CLR_RST);
    
   }
   
   
   if (!connected) {
-    Serial.println("Trying again later...");
-    telnet.println("Trying again later...\r");
+    Serial.print("Trying again later...\n");
+    telnet.print("Trying again later...\n\r");
   }  
   
 }
@@ -149,36 +169,31 @@ void callback(char *topic, byte *payload, unsigned int length) {
     msg += (char)payload[i];
   }
 
-  telnet.printf("\rGot msg: %s, %s", topic, msg.c_str());  // useless
-
 
   if (String(topic) == String(mqtt_bat_topic)) {
 
     if (msg.toInt() >= 80 ) {
 
-      digitalWrite(charger, LOW);
-      digitalWrite(led_builtin, HIGH); 
+      Change_state(false);
 
       mqttClient.publish(mqtt_charg_topic, "off", true);
 
-      telnet.print("\tINFO: \tCHARGER : OFF\n\r");
-      
-
     } else if (msg.toInt() <= 30 ) { 
 
-      digitalWrite(charger, HIGH);
-      digitalWrite(led_builtin, LOW);
+      Change_state(true);
 
       mqttClient.publish(mqtt_charg_topic, "on", true);
-
-
-      telnet.print("\tINFO: \tCHARGER : ON\n\r");
       
+    } else if (msg.toInt() >30 && msg.toInt() < 80){
 
+      telnet.printf("\tINFO: \tCHARGER : STAYING AT %s STATE\n\r", 
+        (last_charger_state) ? clr_charger_on : clr_charger_off);
 
+      mqttClient.publish(mqtt_charg_topic, (last_charger_state) ? "on" : "off", true);
+    
     } else {
-      telnet.printf("ERROR: Received message has wrong value : %ld, in str : %s\n", 
-        msg.toInt(), msg.c_str());
+      telnet.printf("\r%sERROR%s: Received message has wrong value : %ld, in str : %s\n\r", 
+        CLR_RED, CLR_RST, msg.toInt(), msg.c_str());
     }
   }
 
@@ -210,4 +225,26 @@ const char* getResetReason() {
         case ESP_RST_BROWNOUT:return "Voltage dip";
         default:              return "Other";
     }
+}
+
+void Change_state(bool charge) {
+  if (charge) {
+    
+    digitalWrite(charger, HIGH);
+    digitalWrite(charging_led, LOW);
+
+    last_charger_state = true;
+
+    if (telnet.connected()) telnet.printf("\tINFO: CHARGER: %s\n\r", clr_charger_on);
+
+  } else {
+
+    digitalWrite(charger, LOW);
+    digitalWrite(charging_led, HIGH);
+
+    last_charger_state = false;
+
+    if (telnet.connected()) telnet.printf("\tINFO: CHARGER: %s\n\r", clr_charger_off);
+    
+  }
 }
