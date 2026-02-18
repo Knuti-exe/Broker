@@ -104,8 +104,12 @@ void loop() {
 
     if ((!telnet || !telnet.connected())) {
       
+      if (telnet) telnet.stop();
+
+      telnet.available();
+
       telnet = telnetServer.accept();
-        
+      
       if (telnet) {
         
         telnet.print("INFO: \tTelnet client have just connected!\n\r");
@@ -117,10 +121,12 @@ void loop() {
 
         telnet.printf("INFO: \tLast charger state: %s\n\r", 
           (last_charger_state) ? clr_charger_on : clr_charger_off);
-
-        
+    
       }
     }
+
+    while (telnet && telnet.available()) telnet.read();
+    
 
     vTaskDelay(pdMS_TO_TICKS(100));
   }
