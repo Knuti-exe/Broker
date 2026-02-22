@@ -184,13 +184,13 @@ void callback(char *topic, byte *payload, unsigned int length) {
 
       mqttClient.publish(mqtt_charg_topic, "off", true);
 
-    } else if (msg.toInt() <= 30 ) { 
+    } else if (msg.toInt() <= 50 ) { 
 
       Change_state(true);
 
       mqttClient.publish(mqtt_charg_topic, "on", true);
       
-    } else if (msg.toInt() >30 && msg.toInt() < 80){
+    } else if (msg.toInt() >50 && msg.toInt() < 80){
 
       telnet.printf("\tINFO: \tCHARGER : STAYING AT %s STATE\n\r", 
         (last_charger_state) ? clr_charger_on : clr_charger_off);
